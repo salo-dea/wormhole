@@ -10,7 +10,11 @@ const NcursesError = error{
     Generic,
 };
 
-const WormholeErrors = error{ NoParent, NoDir };
+const WormholeErrors = error{
+    NoParent,
+    NoDir,
+    FullBuffer,
+};
 
 const File = struct {
     path: []u8,
@@ -22,10 +26,13 @@ const DirExplorer = struct {
     current_dir: []u8,
     allocator: std.mem.Allocator,
     contents: std.ArrayList(File),
-    cursor: i32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
-        return DirExplorer{ .current_dir = try std.fs.cwd().realpathAlloc(allocator, "."), .contents = try listdir(allocator, start_dir), .allocator = allocator };
+        return DirExplorer{
+            .current_dir = try std.fs.cwd().realpathAlloc(allocator, "."),
+            .contents = try listdir(allocator, start_dir),
+            .allocator = allocator,
+        };
     }
     pub fn deinit(self: *Self) void {
         self.allocator.free(self.current_dir);
@@ -35,16 +42,6 @@ const DirExplorer = struct {
     fn refresh(self: *Self) !void {
         self.contents.deinit();
         self.contents = try listdir(self.allocator, self.current_dir);
-        self.cursor = 0;
-    }
-
-    pub fn move_cursor(self: *Self, move: i32) void {
-        const max_cursor: i32 = @intCast(self.contents.items.len);
-        self.cursor = @mod(self.cursor + move, max_cursor);
-    }
-
-    pub fn get_cursor(self: Self) usize {
-        return @intCast(self.cursor);
     }
 
     pub fn go_up(self: *Self) !void {
@@ -72,6 +69,100 @@ const DirExplorer = struct {
     }
 };
 
+const DirView = struct {
+    const Self = @This();
+
+    exp: *DirExplorer,
+    filter: EditableString,
+    visible_files: std.ArrayList(File),
+    cursor: i32 = 0,
+
+    fn init(allocator: std.mem.Allocator, dir_exp: *DirExplorer) !DirView {
+        return DirView{
+            .exp = dir_exp,
+            .filter = try EditableString.init(allocator, 255),
+            .visible_files = try dir_exp.contents.clone(),
+        };
+    }
+
+    fn reset_filter(self: *DirView) void {
+        self.filter.reset();
+    }
+
+    fn apply_filter(self: *DirView, thresh: usize) !void {
+        self.visible_files.resize(0) catch unreachable;
+
+        for (self.exp.contents.items) |file| {
+            const match_score = str_match(file.path, self.filter.cur);
+            if (match_score > thresh) {
+                try self.visible_files.append(file);
+            }
+        }
+
+        self.move_cursor(0); //TODO stick cursor to the previously selected entry....
+    }
+
+    pub fn move_cursor(self: *Self, move: i32) void {
+        const max_cursor: i32 = @intCast(self.visible_files.items.len);
+
+        if (max_cursor != 0) {
+            self.cursor = @mod(self.cursor + move, max_cursor);
+        } else {
+            self.cursor = 0;
+        }
+    }
+
+    pub fn get_cursor(self: Self) usize {
+        return @intCast(self.cursor);
+    }
+
+    // call after dir_exp changed to new dir
+    // TODO set up some kind of event?
+    pub fn new_dir(self: *Self) !void {
+        self.cursor = 0;
+        self.reset_filter();
+    }
+};
+
+const EditableString = struct {
+    const Self = @This();
+
+    max_size: usize,
+    cur: []u8,
+
+    pub fn init(allocator: std.mem.Allocator, max_size: usize) !EditableString {
+        var new = EditableString{
+            .max_size = max_size,
+            .cur = try allocator.alloc(u8, max_size),
+        };
+        new.cur.len = 0;
+        return new;
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        //TODO does the size matter for free?
+        allocator.free(self.cur);
+    }
+
+    pub fn reset(self: *Self) void {
+        self.cur.len = 0;
+    }
+
+    pub fn backspace(self: *Self) void {
+        if (self.cur.len != 0) {
+            self.cur.len -= 1;
+        }
+    }
+
+    pub fn add_char(self: *Self, char: u8) !void {
+        if (self.cur.len == self.max_size) {
+            return WormholeErrors.FullBuffer;
+        }
+        self.cur.len += 1;
+        self.cur[self.cur.len - 1] = char;
+    }
+};
+
 pub fn main() !void {
     //try mytest();
     var alloc = std.heap.page_allocator; // std.heap.GeneralPurposeAllocator(.{}).allocator();
@@ -93,6 +184,16 @@ fn ncurse_print(alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytyp
     _ = ncurses.printw(buf.ptr);
 }
 
+fn str_match(str: []const u8, pattern: []const u8) usize {
+    var minlen: usize = @min(str.len, pattern.len);
+    for (str[0..minlen], pattern[0..minlen], 0..) |a, b, idx| {
+        if (a != b) {
+            return idx;
+        }
+    }
+    return std.math.maxInt(usize);
+}
+
 fn print_dir_contents(alloc: std.mem.Allocator) !void {
     var win = ncurses.initscr();
     _ = win;
@@ -105,13 +206,20 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
     var dir_exp = try DirExplorer.init(alloc, ".");
     defer dir_exp.deinit();
 
+    var dir_view = try DirView.init(alloc, &dir_exp); //TODO deinit
+
     main_loop: while (true) {
+        _ = ncurses.clear();
+        const dirs = &dir_view.visible_files;
+
+        _ = ncurses.move(0, 0); //reset cursor
         try ncurse_print(alloc, "-> {s} \n", .{dir_exp.current_dir});
 
-        const dirs = &dir_exp.contents;
         for (0.., dirs.items) |i, dir| {
+
+            //filter mechanism
             //defer alloc.free(cstring);
-            const highlighted: bool = i == dir_exp.cursor;
+            const highlighted: bool = i == dir_view.get_cursor();
 
             if (highlighted) {
                 _ = ncurses.attron(ncurses.COLOR_PAIR(5) | ncurses.A_BOLD);
@@ -126,25 +234,34 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
                 _ = ncurses.attroff(ncurses.COLOR_PAIR(5) | ncurses.A_BOLD);
             }
         }
+        //const maxy = ncurses.getmaxy(win);
+        //_ = ncurses.move(maxy - 1, 0);
+        try ncurse_print(alloc, ">> {s}", .{dir_view.filter.cur});
+
         _ = ncurses.refresh();
         var key: usize = getch() catch 255;
-        _ = ncurses.move(0, 0); //reset cursor
-        _ = ncurses.clear();
 
         switch (key) {
-            '0'...'9' => {
-                const idx = key - '0';
-                try dir_exp.enter(dirs.items[idx]);
+            ncurses.KEY_DOWN => dir_view.move_cursor(1),
+            ncurses.KEY_UP => dir_view.move_cursor(-1),
+            ncurses.KEY_RIGHT, '\n' => {
+                try dir_exp.enter(dir_view.visible_files.items[dir_view.get_cursor()]);
+                try dir_view.new_dir();
             },
-            ncurses.KEY_DOWN => dir_exp.move_cursor(1),
-            ncurses.KEY_UP => dir_exp.move_cursor(-1),
-            '\n' => try dir_exp.enter(dirs.items[dir_exp.get_cursor()]),
-            ncurses.KEY_LEFT, ncurses.KEY_BACKSPACE => try dir_exp.go_up(),
+            ncurses.KEY_LEFT => {
+                dir_exp.go_up() catch {};
+                try dir_view.new_dir();
+            },
+            ncurses.KEY_BACKSPACE => dir_view.filter.backspace(),
             std.ascii.control_code.esc => break :main_loop,
             else => std.debug.print("UNKNOWN KEY: {d} \n", .{key}),
         }
 
-        //_ = ncurses.mvchgat(selection, 0, -1, ncurses.A_UNDERLINE, @intCast(ncurses.COLOR_PAIR(ncurses.COLOR_WHITE)), null);
+        if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
+            dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
+        }
+
+        try dir_view.apply_filter(500);
     }
 }
 
@@ -175,7 +292,10 @@ fn listdir(alloc: std.mem.Allocator, dirname: []const u8) !std.ArrayList(File) {
     var dirlist: std.ArrayList(File) = std.ArrayList(File).init(alloc);
 
     while (try iterator.next()) |path| {
-        try dirlist.append(File{ .path = try std.fmt.allocPrint(alloc, "{s}", .{path.name}), .kind = path.kind });
+        try dirlist.append(File{
+            .path = try std.fmt.allocPrint(alloc, "{s}", .{path.name}),
+            .kind = path.kind,
+        });
     }
     std.sort.block(File, dirlist.items, {}, file_less_than);
     return dirlist;
