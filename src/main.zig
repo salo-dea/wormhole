@@ -17,6 +17,41 @@ const WormholeErrors = error{
     NoParent,
 };
 
+const DirExplorer = struct {
+    current_dir: []u8,
+    allocator: std.mem.Allocator,
+    contents: std.ArrayList([]const u8),
+
+    pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
+        return DirExplorer{ .current_dir = try std.fs.cwd().realpathAlloc(allocator, "."), .contents = try listdir(allocator, start_dir), .allocator = allocator };
+    }
+
+    fn update_contents(self: *DirExplorer) !void {
+        self.contents.deinit();
+        self.contents = try listdir(self.allocator, self.current_dir);
+    }
+
+    pub fn go_up(self: *DirExplorer) !void {
+        var i = self.current_dir.len - 1;
+        while (i > 0) : (i -= 1) {
+            if (self.current_dir[i] == '/') {
+                self.current_dir.len = i;
+                try self.update_contents();
+                return;
+            }
+        }
+        return WormholeErrors.NoParent;
+    }
+
+    pub fn enter(self: *DirExplorer, target_dir: []const u8) !void {
+        const last_dir = self.current_dir;
+        defer self.allocator.free(last_dir);
+
+        self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.current_dir, target_dir });
+        try self.update_contents();
+    }
+};
+
 pub fn main() !void {
     //try mytest();
     var alloc = std.heap.c_allocator; // std.heap.GeneralPurposeAllocator(.{}).allocator();
@@ -38,17 +73,6 @@ fn ncurse_print(alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytyp
     _ = ncurses.printw(buf.ptr);
 }
 
-fn go_up(path: *[]u8) !void {
-    var i = path.len - 1;
-    while (i > 0) : (i -= 1) {
-        if (path.*[i] == '/') {
-            path.len = i;
-            return;
-        }
-    }
-    return WormholeErrors.NoParent;
-}
-
 fn print_dir_contents(alloc: std.mem.Allocator) !void {
     var win = ncurses.initscr();
     _ = win;
@@ -56,12 +80,11 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
     _ = ncurses.noecho();
     _ = ncurses.cbreak();
 
-    var cur_dir = try std.fs.cwd().realpathAlloc(alloc, ".");
+    var dir_exp = try DirExplorer.init(alloc, ".");
     while (true) {
-        try ncurse_print(alloc, "-> {s} \n", .{cur_dir});
-        var dirs = try listdir(alloc, cur_dir);
-        defer dirs.deinit();
+        try ncurse_print(alloc, "-> {s} \n", .{dir_exp.current_dir});
 
+        const dirs = &dir_exp.contents;
         for (0.., dirs.items) |i, dir| {
             //defer alloc.free(cstring);
             try ncurse_print(alloc, "[{d}] {s} \n", .{ i, dir });
@@ -76,16 +99,14 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
         }
 
         if (key == 'u') {
-            try go_up(&cur_dir);
+            try dir_exp.go_up();
             continue;
         }
 
         key -= '0';
 
         if (key < dirs.items.len) {
-            const last_dir = cur_dir;
-            cur_dir = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ cur_dir, dirs.items[key] });
-            alloc.free(last_dir);
+            try dir_exp.enter(dirs.items[key]);
         } else {
             std.debug.print("BREAK\n", .{});
             break;
