@@ -195,9 +195,9 @@ fn str_match(str: []const u8, pattern: []const u8) usize {
 }
 
 fn print_dir_contents(alloc: std.mem.Allocator) !void {
-    var win = ncurses.initscr();
-    _ = win;
-    defer _ = ncurses.endwin();
+    //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
+    var screen = ncurses.newterm(null, ncurses.stderr, ncurses.stdin);
+    _ = screen;
 
     _ = ncurses.keypad(ncurses.stdscr, true);
     _ = ncurses.noecho();
@@ -263,6 +263,11 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
 
         try dir_view.apply_filter(500);
     }
+
+    _ = ncurses.endwin();
+
+    // print the current directory to stdout so that the calling script can cd to it
+    try std.io.getStdOut().writer().print("{s}\n", .{dir_exp.current_dir});
 }
 
 fn str_less_than(context: void, str_a: []const u8, str_b: []const u8) bool {
