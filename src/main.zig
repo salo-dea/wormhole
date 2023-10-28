@@ -2,6 +2,7 @@
 // text search for fast nav?
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ncurses = @cImport({
     @cInclude("curses.h");
 });
@@ -204,7 +205,10 @@ fn str_match(str: []const u8, pattern: []const u8) usize {
 
 fn print_dir_contents(alloc: std.mem.Allocator) !void {
     //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
-    var screen = ncurses.newterm(null, STDERR, STDIN);
+    var screen = switch (builtin.os.tag) {
+        .windows => ncurses.newterm(null, STDERR, STDIN),
+        else => ncurses.newterm(null, ncurses.stderr, ncurses.stdin),
+    };
     _ = screen;
 
     _ = ncurses.keypad(ncurses.stdscr, true);
