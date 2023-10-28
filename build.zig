@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -23,7 +24,20 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.linkSystemLibrary("ncurses");
+
+    switch (builtin.os.tag) {
+        .windows => {
+            const pdcurses = std.build.LazyPath.relative("pdcurses.a");
+            exe.addIncludePath(std.build.LazyPath.relative("."));
+            exe.addLibraryPath(std.build.LazyPath.relative("."));
+            //exe.linkSystemLibrary("pdcurses");
+            exe.addObjectFile(pdcurses);
+        },
+        .linux => {
+            exe.linkSystemLibrary("ncurses");
+        },
+        else => @panic("Unsupported OS"),
+    }
     exe.linkSystemLibrary("c");
 
     // This declares intent for the executable to be installed into the

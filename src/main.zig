@@ -3,8 +3,12 @@
 
 const std = @import("std");
 const ncurses = @cImport({
-    @cInclude("ncurses.h");
+    @cInclude("curses.h");
 });
+
+const STDIN = 0;
+const STDOUT = 1;
+const STDERR = 2;
 
 const NcursesError = error{
     Generic,
@@ -47,7 +51,7 @@ const DirExplorer = struct {
     pub fn go_up(self: *Self) !void {
         var i = self.current_dir.len - 1;
         while (i > 0) : (i -= 1) {
-            if (self.current_dir[i] == '/') {
+            if (self.current_dir[i] == '/' or self.current_dir[i] == '\\') {
                 self.current_dir.len = i;
                 try self.refresh();
                 return;
@@ -200,7 +204,7 @@ fn str_match(str: []const u8, pattern: []const u8) usize {
 
 fn print_dir_contents(alloc: std.mem.Allocator) !void {
     //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
-    var screen = ncurses.newterm(null, ncurses.stderr, ncurses.stdin);
+    var screen = ncurses.newterm(null, STDERR, STDIN);
     _ = screen;
 
     _ = ncurses.keypad(ncurses.stdscr, true);
@@ -226,7 +230,7 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
             const highlighted: bool = i == dir_view.get_cursor();
 
             if (highlighted) {
-                _ = ncurses.attron(ncurses.COLOR_PAIR(5) | ncurses.A_BOLD);
+                _ = ncurses.attron(ncurses.A_STANDOUT);
             }
 
             switch (dir.kind) {
@@ -235,7 +239,7 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
             }
 
             if (highlighted) {
-                _ = ncurses.attroff(ncurses.COLOR_PAIR(5) | ncurses.A_BOLD);
+                _ = ncurses.attroff(ncurses.A_STANDOUT);
             }
         }
         //const maxy = ncurses.getmaxy(win);
@@ -256,7 +260,7 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
                 dir_exp.go_up() catch {};
                 try dir_view.new_dir();
             },
-            ncurses.KEY_BACKSPACE => dir_view.filter.backspace(),
+            ncurses.KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
             std.ascii.control_code.esc => break :main_loop,
             else => std.debug.print("UNKNOWN KEY: {d} \n", .{key}),
         }
