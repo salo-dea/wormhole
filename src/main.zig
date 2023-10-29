@@ -60,11 +60,14 @@ const DirExplorer = struct {
 
     pub fn go_up(self: *Self) !void {
         var i = self.current_dir.len - 2;
-        while (i > 0) : (i -= 1) {
+        while (true) : (i -= 1) {
             if (self.current_dir[i] == '/') {
                 self.current_dir.len = i + 1;
                 try self.refresh();
                 return;
+            }
+            if (i == 0) {
+                break;
             }
         }
 
