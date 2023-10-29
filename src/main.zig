@@ -43,7 +43,7 @@ const DirExplorer = struct {
         var cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
         str_replace(cwd, '\\', '/');
         return DirExplorer{
-            .current_dir = cwd,
+            .current_dir = try std.fmt.allocPrint(allocator, "{s}/", .{cwd}),
             .contents = try listdir(allocator, start_dir),
             .allocator = allocator,
         };
@@ -59,14 +59,15 @@ const DirExplorer = struct {
     }
 
     pub fn go_up(self: *Self) !void {
-        var i = self.current_dir.len - 1;
+        var i = self.current_dir.len - 2;
         while (i > 0) : (i -= 1) {
-            if (self.current_dir[i] == '/' or self.current_dir[i] == '\\') {
-                self.current_dir.len = i;
+            if (self.current_dir[i] == '/') {
+                self.current_dir.len = i + 1;
                 try self.refresh();
                 return;
             }
         }
+
         return WormholeErrors.NoParent;
     }
 
@@ -75,7 +76,7 @@ const DirExplorer = struct {
             const last_dir = self.current_dir;
             defer self.allocator.free(last_dir);
 
-            self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.current_dir, target_dir.path });
+            self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}{s}/", .{ self.current_dir, target_dir.path });
             try self.refresh();
         } else {
             return WormholeErrors.NoDir;
