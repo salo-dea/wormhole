@@ -11,6 +11,13 @@ const STDIN = 0;
 const STDOUT = 1;
 const STDERR = 2;
 
+// Virtual key codes for vscode integrated terminal
+const VIRTUAL_KEY_DOWN = 456;
+const VIRTUAL_KEY_UP = 450;
+const VIRTUAL_KEY_RIGHT = 454;
+const VIRTUAL_KEY_LEFT = 452;
+const VIRTUAL_KEY_BACKSPACE = 3;
+
 const NcursesError = error{
     Generic,
 };
@@ -254,17 +261,17 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
         var key: usize = getch() catch 255;
 
         switch (key) {
-            ncurses.KEY_DOWN => dir_view.move_cursor(1),
-            ncurses.KEY_UP => dir_view.move_cursor(-1),
-            ncurses.KEY_RIGHT, '\n' => {
+            ncurses.KEY_DOWN, VIRTUAL_KEY_DOWN => dir_view.move_cursor(1),
+            ncurses.KEY_UP, VIRTUAL_KEY_UP => dir_view.move_cursor(-1),
+            ncurses.KEY_RIGHT, VIRTUAL_KEY_RIGHT, '\n' => {
                 try dir_exp.enter(dir_view.visible_files.items[dir_view.get_cursor()]);
                 try dir_view.new_dir();
             },
-            ncurses.KEY_LEFT => {
+            ncurses.KEY_LEFT, VIRTUAL_KEY_LEFT => {
                 dir_exp.go_up() catch {};
                 try dir_view.new_dir();
             },
-            ncurses.KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
+            ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
             std.ascii.control_code.esc => break :main_loop,
             else => std.debug.print("UNKNOWN KEY: {d} \n", .{key}),
         }
