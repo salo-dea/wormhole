@@ -40,8 +40,10 @@ const DirExplorer = struct {
     contents: std.ArrayList(File),
 
     pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
+        var cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
+        str_replace(cwd, '\\', '/');
         return DirExplorer{
-            .current_dir = try std.fs.cwd().realpathAlloc(allocator, "."),
+            .current_dir = cwd,
             .contents = try listdir(allocator, start_dir),
             .allocator = allocator,
         };
@@ -308,6 +310,14 @@ fn file_less_than(context: void, file_a: File, file_b: File) bool {
     }
     // everything else sorted by name
     return str_less_than(context, file_a.path, file_b.path);
+}
+
+fn str_replace(str: []u8, from: u8, to: u8) void {
+    for (0..str.len) |i| {
+        if (str[i] == from) {
+            str[i] = to;
+        }
+    }
 }
 
 fn listdir(alloc: std.mem.Allocator, dirname: []const u8) !std.ArrayList(File) {
