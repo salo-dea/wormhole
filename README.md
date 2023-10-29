@@ -4,8 +4,8 @@ Fast directory navigation using ncurses
 
 ## Build
 - requires:
-  - zig 0.11.0
-  - ncurses 
+  - zig 0.12.0 (master)
+  - ncurses (only needed on linux)
 - do `zig build` or `zig build run` in the main directory
 
 ## Usage
