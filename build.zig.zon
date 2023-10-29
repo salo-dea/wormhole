@@ -1,0 +1,11 @@
+.{
+    .name = "wormhole",
+    .version = "0.0.1",
+    .paths = .{""},
+    .dependencies = .{
+        .zig_pdcurses = .{
+            .url = "https://github.com/salo-dea/zig-pdcurses/archive/refs/tags/v0.0.2.tar.gz",
+            .hash = "122012098cead7edcce390d88d02eb5ab2ffd9b748118d684d0303bd78a3bc59014e",
+        },
+    },
+}

@@ -27,11 +27,12 @@ pub fn build(b: *std.Build) void {
 
     switch (builtin.os.tag) {
         .windows => {
-            const pdcurses = std.build.LazyPath.relative("pdcurses.a");
-            exe.addIncludePath(std.build.LazyPath.relative("."));
-            exe.addLibraryPath(std.build.LazyPath.relative("."));
-            //exe.linkSystemLibrary("pdcurses");
-            exe.addObjectFile(pdcurses);
+            const pdcurses = b.dependency("zig_pdcurses", .{
+                .target = target,
+                .optimize = optimize,
+            });
+            exe.installLibraryHeaders(pdcurses.artifact("zig-pdcurses"));
+            exe.linkLibrary(pdcurses.artifact("zig-pdcurses"));
         },
         .linux => {
             exe.linkSystemLibrary("ncurses");
