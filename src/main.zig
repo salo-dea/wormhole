@@ -291,8 +291,10 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
 
     _ = ncurses.endwin();
 
-    // print the current directory to stdout so that the calling script can cd to it
-    try std.io.getStdOut().writer().print("{s}\n", .{dir_exp.current_dir});
+    // print the current directory to special file so that the calling script can cd to it
+    var file = try std.fs.cwd().createFile(".fastnav-wormhole", .{});
+    defer file.close();
+    _ = try file.write(dir_exp.current_dir);
 }
 
 fn str_less_than(context: void, str_a: []const u8, str_b: []const u8) bool {
