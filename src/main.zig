@@ -25,6 +25,7 @@ const NcursesError = error{
 const WormholeErrors = error{
     NoParent,
     NoDir,
+    UnsupportedPath,
     FullBuffer,
 };
 
@@ -74,16 +75,36 @@ const DirExplorer = struct {
         return WormholeErrors.NoParent;
     }
 
-    pub fn enter(self: *Self, target_dir: File) !void {
-        if (target_dir.kind == std.fs.File.Kind.directory) {
-            const last_dir = self.current_dir;
-            defer self.allocator.free(last_dir);
+    const EnterResultKind = enum {
+        NewDir,
+        IsFile,
+    };
 
-            self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}{s}/", .{ self.current_dir, target_dir.path });
-            try self.refresh();
-        } else {
-            return WormholeErrors.NoDir;
+    const EnterResult = union(EnterResultKind) {
+        NewDir: void,
+        IsFile: []u8,
+    };
+
+    pub fn enter(self: *Self, target_dir: File) !EnterResult {
+        switch (target_dir.kind) {
+            .directory => {
+                const last_dir = self.current_dir;
+                defer self.allocator.free(last_dir);
+
+                self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}{s}/", .{ self.current_dir, target_dir.path });
+                try self.refresh();
+                return .NewDir;
+            },
+            .file => {
+                const file_path = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ self.current_dir, target_dir.path });
+                return .{ .IsFile = file_path };
+            },
+            else => return WormholeErrors.UnsupportedPath,
         }
+    }
+
+    pub fn currentDirOwned(self: *Self) ![]u8 {
+        return self.alloc.dupe(u8, self.current_dir);
     }
 };
 
@@ -216,24 +237,13 @@ fn str_match(str: []const u8, pattern: []const u8) usize {
     return if (pattern.len == minlen) std.math.maxInt(usize) else minlen; //complete match
 }
 
-fn print_dir_contents(alloc: std.mem.Allocator) !void {
-    //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
-    var screen = switch (builtin.os.tag) {
-        .windows => ncurses.newterm(null, STDERR, STDIN),
-        else => ncurses.newterm(null, ncurses.stderr, ncurses.stdin),
-    };
-    _ = screen;
-
-    _ = ncurses.keypad(ncurses.stdscr, true);
-    _ = ncurses.noecho();
-    _ = ncurses.cbreak();
-
+fn navigate(alloc: std.mem.Allocator) ![]u8 {
     var dir_exp = try DirExplorer.init(alloc, ".");
     defer dir_exp.deinit();
 
     var dir_view = try DirView.init(alloc, &dir_exp); //TODO deinit
 
-    main_loop: while (true) {
+    while (true) {
         _ = ncurses.clear();
         const dirs = &dir_view.visible_files;
 
@@ -270,15 +280,19 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
             ncurses.KEY_DOWN, VIRTUAL_KEY_DOWN => dir_view.move_cursor(1),
             ncurses.KEY_UP, VIRTUAL_KEY_UP => dir_view.move_cursor(-1),
             ncurses.KEY_RIGHT, VIRTUAL_KEY_RIGHT, '\n' => {
-                try dir_exp.enter(dir_view.visible_files.items[dir_view.get_cursor()]);
-                try dir_view.new_dir();
+                const target_file = dir_view.visible_files.items[dir_view.get_cursor()];
+                const enter_res = try dir_exp.enter(target_file);
+                switch (enter_res) {
+                    .NewDir => try dir_view.new_dir(),
+                    .IsFile => |file| return file,
+                }
             },
             ncurses.KEY_LEFT, VIRTUAL_KEY_LEFT => {
                 dir_exp.go_up() catch {};
                 try dir_view.new_dir();
             },
             ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
-            std.ascii.control_code.esc => break :main_loop,
+            std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
             else => std.debug.print("UNKNOWN KEY: {d} \n", .{key}),
         }
 
@@ -288,13 +302,28 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
 
         try dir_view.apply_filter(500);
     }
+}
+
+fn print_dir_contents(alloc: std.mem.Allocator) !void {
+    //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
+    var screen = switch (builtin.os.tag) {
+        .windows => ncurses.newterm(null, STDERR, STDIN),
+        else => ncurses.newterm(null, ncurses.stderr, ncurses.stdin),
+    };
+    _ = screen;
+
+    _ = ncurses.keypad(ncurses.stdscr, true);
+    _ = ncurses.noecho();
+    _ = ncurses.cbreak();
+
+    const target_file = try navigate(alloc);
 
     _ = ncurses.endwin();
 
     // print the current directory to special file so that the calling script can cd to it
     var file = try std.fs.cwd().createFile(".fastnav-wormhole", .{});
     defer file.close();
-    _ = try file.write(dir_exp.current_dir);
+    _ = try file.write(target_file);
 }
 
 fn str_less_than(context: void, str_a: []const u8, str_b: []const u8) bool {
