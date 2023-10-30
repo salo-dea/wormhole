@@ -8,7 +8,7 @@ while($true) {
         Remove-Item $nav_file #clean up if there was something left before
     }
     
-    ./wormhole.exe
+    wormhole.exe
     $target_path = Get-Content .\.fastnav-wormhole
     $is_folder = Test-Path $target_path -PathType Container
     $is_file = Test-Path $target_path -PathType Leaf
@@ -23,5 +23,6 @@ while($true) {
     }
     else {
         Write-Error "Invalid Path"
+        break
     }
 }
