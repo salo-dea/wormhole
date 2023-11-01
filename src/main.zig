@@ -176,7 +176,14 @@ const DirView = struct {
             return; //this means we cannot print anything...
         }
 
-        const max_viewport_idx = self.view_start_idx + term_lines - num_lines_reserve - 1; // -1 to print a .....
+        const used_viewport_space = term_lines - num_lines_reserve - 1;
+
+        if (self.get_cursor() >= self.view_start_idx + used_viewport_space) {
+            self.view_start_idx = self.get_cursor() - used_viewport_space + 1;
+        } else if (self.get_cursor() < self.view_start_idx) {
+            self.view_start_idx = self.get_cursor();
+        }
+        const max_viewport_idx = self.view_start_idx + used_viewport_space; // -1 to print a "..."
 
         const max = @min(max_viewport_idx, self.visible_files.items.len);
         for (self.view_start_idx..max) |i| {
