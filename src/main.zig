@@ -332,11 +332,13 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
             },
             ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
             std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
-            else => std.debug.print("UNKNOWN KEY: {d} \n", .{key}),
-        }
-
-        if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
-            dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
+            else => {
+                if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
+                    dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
+                } else {
+                    std.debug.print("UNKNOWN KEY: {d} \n", .{key});
+                }
+            },
         }
 
         try dir_view.apply_filter(500);
