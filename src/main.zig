@@ -129,16 +129,30 @@ const DirView = struct {
     }
 
     fn apply_filter(self: *DirView, thresh: usize) !void {
+        //we want to apply the last cursor position , if the element that was previously highlighted,
+        //is still there, it should have the cursor again - otherwise the one before it
+        var current_file_ptr: ?[*]u8 = null;
+        if (self.visible_files.items.len > self.get_cursor()) {
+            current_file_ptr = self.visible_files.items[self.get_cursor()].path.ptr;
+        }
+
         self.visible_files.resize(0) catch unreachable;
 
+        var new_cursor: usize = 0;
+
+        //main filter stuff here
         for (self.exp.contents.items) |file| {
             const match_score = str_match(file.path, self.filter.cur);
             if (match_score > thresh) {
                 try self.visible_files.append(file);
             }
+            if (current_file_ptr) |cur_file_ptr| {
+                if (cur_file_ptr == file.path.ptr and self.visible_files.items.len != 0) {
+                    new_cursor = self.visible_files.items.len - 1;
+                }
+            }
         }
-
-        self.move_cursor(0); //TODO stick cursor to the previously selected entry....
+        self.cursor = @intCast(new_cursor);
     }
 
     pub fn move_cursor(self: *Self, move: i32) void {
@@ -148,6 +162,25 @@ const DirView = struct {
             self.cursor = @mod(self.cursor + move, max_cursor);
         } else {
             self.cursor = 0;
+        }
+    }
+
+    pub fn print(self: *Self, alloc: std.mem.Allocator) !void {
+        for (0.., self.visible_files.items) |i, dir| {
+            const highlighted: bool = i == self.get_cursor();
+
+            if (highlighted) {
+                _ = ncurses.attron(ncurses.A_STANDOUT);
+            }
+
+            switch (dir.kind) {
+                .directory => try ncurse_print(alloc, "[{d}] {s} \n", .{ i, dir.path }),
+                else => try ncurse_print(alloc, " - {s} \n", .{dir.path}),
+            }
+
+            if (highlighted) {
+                _ = ncurses.attroff(ncurses.A_STANDOUT);
+            }
         }
     }
 
@@ -245,30 +278,12 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
 
     while (true) {
         _ = ncurses.clear();
-        const dirs = &dir_view.visible_files;
 
         _ = ncurses.move(0, 0); //reset cursor
         try ncurse_print(alloc, "-> {s} \n", .{dir_exp.current_dir});
 
-        for (0.., dirs.items) |i, dir| {
+        try dir_view.print(alloc);
 
-            //filter mechanism
-            //defer alloc.free(cstring);
-            const highlighted: bool = i == dir_view.get_cursor();
-
-            if (highlighted) {
-                _ = ncurses.attron(ncurses.A_STANDOUT);
-            }
-
-            switch (dir.kind) {
-                .directory => try ncurse_print(alloc, "[{d}] {s} \n", .{ i, dir.path }),
-                else => try ncurse_print(alloc, " - {s} \n", .{dir.path}),
-            }
-
-            if (highlighted) {
-                _ = ncurses.attroff(ncurses.A_STANDOUT);
-            }
-        }
         //const maxy = ncurses.getmaxy(win);
         //_ = ncurses.move(maxy - 1, 0);
         try ncurse_print(alloc, ">> {s}", .{dir_view.filter.cur});
@@ -308,7 +323,7 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
     //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
     var screen = switch (builtin.os.tag) {
         .windows => ncurses.newterm(null, STDERR, STDIN),
-        else => ncurses.newterm(null, ncurses.stderr, ncurses.stdin),
+        else => ncurses.newterm(null, ncurses.stdout, ncurses.stdin),
     };
     _ = screen;
 
