@@ -115,6 +115,7 @@ const DirView = struct {
     filter: EditableString,
     visible_files: std.ArrayList(File),
     cursor: i32 = 0,
+    view_start_idx: usize = 0,
 
     fn init(allocator: std.mem.Allocator, dir_exp: *DirExplorer) !DirView {
         return DirView{
@@ -165,8 +166,21 @@ const DirView = struct {
         }
     }
 
-    pub fn print(self: *Self, alloc: std.mem.Allocator) !void {
-        for (0.., self.visible_files.items) |i, dir| {
+    pub fn print(self: *Self, alloc: std.mem.Allocator, num_lines_reserve: usize) !void {
+        const result = ncurses.getmaxy(ncurses.stdscr);
+        if (result < 0) {
+            return NcursesError.Generic;
+        }
+        const term_lines: usize = @intCast(result);
+        if (term_lines < num_lines_reserve) {
+            return; //this means we cannot print anything...
+        }
+
+        const max_viewport_idx = self.view_start_idx + term_lines - num_lines_reserve - 1; // -1 to print a .....
+
+        const max = @min(max_viewport_idx, self.visible_files.items.len);
+        for (self.view_start_idx..max) |i| {
+            const dir = self.visible_files.items[i];
             const highlighted: bool = i == self.get_cursor();
 
             if (highlighted) {
@@ -181,6 +195,9 @@ const DirView = struct {
             if (highlighted) {
                 _ = ncurses.attroff(ncurses.A_STANDOUT);
             }
+        }
+        if (max_viewport_idx < self.visible_files.items.len) {
+            try ncurse_print(alloc, "... \n", .{});
         }
     }
 
@@ -282,7 +299,7 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
         _ = ncurses.move(0, 0); //reset cursor
         try ncurse_print(alloc, "-> {s} \n", .{dir_exp.current_dir});
 
-        try dir_view.print(alloc);
+        try dir_view.print(alloc, 2);
 
         //const maxy = ncurses.getmaxy(win);
         //_ = ncurses.move(maxy - 1, 0);
