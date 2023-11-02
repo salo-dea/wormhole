@@ -40,13 +40,14 @@ const DirExplorer = struct {
     current_dir: []u8,
     allocator: std.mem.Allocator,
     contents: std.ArrayList(File),
+    look_depth: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
         var cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
         str_replace(cwd, '\\', '/');
         return DirExplorer{
             .current_dir = try std.fmt.allocPrint(allocator, "{s}/", .{cwd}),
-            .contents = try listdir(allocator, start_dir),
+            .contents = try listdir(allocator, start_dir, 0),
             .allocator = allocator,
         };
     }
@@ -55,9 +56,14 @@ const DirExplorer = struct {
         self.contents.deinit();
     }
 
+    pub fn set_look_depth(self: *Self, new_depth: usize) !void {
+        self.look_depth = new_depth;
+        try self.refresh();
+    }
+
     fn refresh(self: *Self) !void {
         self.contents.deinit();
-        self.contents = try listdir(self.allocator, self.current_dir);
+        self.contents = try listdir(self.allocator, self.current_dir, self.look_depth);
     }
 
     pub fn go_up(self: *Self) !void {
@@ -66,6 +72,7 @@ const DirExplorer = struct {
         while (true) : (i -= 1) {
             if (self.current_dir[i] == '/') {
                 self.current_dir.len = i + 1;
+                self.look_depth = 0; //reset look depth, maybe rethink
                 try self.refresh();
                 return;
             }
@@ -94,6 +101,7 @@ const DirExplorer = struct {
                 defer self.allocator.free(last_dir);
 
                 self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}{s}/", .{ self.current_dir, target_dir.path });
+                self.look_depth = 0; //reset look depth, maybe rethink
                 try self.refresh();
                 return .NewDir;
             },
@@ -212,7 +220,7 @@ const DirView = struct {
             return; //this means we cannot print anything...
         }
 
-        const used_viewport_space = term_lines - num_lines_reserve - 1; // TODO why this -1
+        const used_viewport_space = term_lines -| num_lines_reserve;
 
         //handling of view_start_idx_being further down than it needs to be
         if (self.view_start_idx + used_viewport_space > self.visible_files.items.len) {
@@ -225,8 +233,7 @@ const DirView = struct {
         } else if (self.cursor < self.view_start_idx) {
             self.view_start_idx = self.cursor;
         }
-        const max_viewport_idx = self.view_start_idx + used_viewport_space; // -1 to print a "..."
-
+        const max_viewport_idx = self.view_start_idx + used_viewport_space;
         const max = @min(max_viewport_idx, self.visible_files.items.len);
         for (self.view_start_idx..max) |i| {
             const dir = self.visible_files.items[i];
@@ -349,7 +356,11 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
 
         //const maxy = ncurses.getmaxy(win);
         //_ = ncurses.move(maxy - 1, 0);
-        try ncurse_print(alloc, ">> {s}", .{dir_view.filter.cur});
+        for (0..dir_exp.look_depth) |i| {
+            _ = i;
+            try ncurse_print(alloc, ">", .{}); //TODO: this hurts
+        }
+        try ncurse_print(alloc, "> {s}", .{dir_view.filter.cur});
 
         _ = ncurses.refresh();
         var key: usize = getch() catch 255;
@@ -373,6 +384,8 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
             ncurses.KEY_NPAGE => try dir_view.move_page(.{ .Down = 1 }, lines_used), //page down
             ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
             std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
+            '>' => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
+            '<' => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
             else => {
                 if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
                     dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
@@ -437,7 +450,7 @@ fn str_replace(str: []u8, from: u8, to: u8) void {
     }
 }
 
-fn listdir(alloc: std.mem.Allocator, dirname: []const u8) !std.ArrayList(File) {
+fn listdir(alloc: std.mem.Allocator, dirname: []const u8, recurse_depth: usize) !std.ArrayList(File) {
     const dir = try std.fs.cwd().openIterableDir(dirname, .{});
     var iterator = dir.iterate();
     var dirlist: std.ArrayList(File) = std.ArrayList(File).init(alloc);
@@ -447,6 +460,21 @@ fn listdir(alloc: std.mem.Allocator, dirname: []const u8) !std.ArrayList(File) {
             .path = try std.fmt.allocPrint(alloc, "{s}", .{path.name}),
             .kind = path.kind,
         });
+
+        if (path.kind == .directory and recurse_depth > 0) {
+            const subfolder = try std.fmt.allocPrint(alloc, "{s}{s}/", .{ dirname, path.name });
+            defer alloc.free(subfolder);
+
+            var subfolder_paths = try listdir(alloc, subfolder, recurse_depth - 1);
+            defer subfolder_paths.deinit();
+
+            for (subfolder_paths.items) |*subitem| {
+                var subitem_path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ path.name, subitem.path });
+                alloc.free(subitem.path);
+                subitem.path = subitem_path;
+            }
+            try dirlist.appendSlice(subfolder_paths.items);
+        }
     }
     std.sort.block(File, dirlist.items, {}, file_less_than);
     return dirlist;
