@@ -1,5 +1,6 @@
 //TODO:
-// text search for fast nav?
+// - toggle hidden files
+// - page up/down
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -178,6 +179,16 @@ const DirView = struct {
 
         const used_viewport_space = term_lines - num_lines_reserve - 1;
 
+        //handling of view_start_idx_being further down than it needs to be
+        if (self.view_start_idx + used_viewport_space > self.visible_files.items.len) {
+            if (self.visible_files.items.len < used_viewport_space) {
+                self.view_start_idx = 0;
+            } else {
+                self.view_start_idx = self.visible_files.items.len - used_viewport_space;
+            }
+        }
+
+        //handling of cursor exiting the screen at the top or bottom
         if (self.get_cursor() >= self.view_start_idx + used_viewport_space) {
             self.view_start_idx = self.get_cursor() - used_viewport_space + 1;
         } else if (self.get_cursor() < self.view_start_idx) {
@@ -330,6 +341,8 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
                 dir_exp.go_up() catch {};
                 try dir_view.new_dir();
             },
+            ncurses.KEY_PPAGE => {}, //page up
+            ncurses.KEY_NPAGE => {}, //page down
             ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
             std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
             else => {
