@@ -194,7 +194,7 @@ const DirView = struct {
 
         self.view_start_idx = switch (move) {
             .Up => |val| self.view_start_idx -| (val * used_viewport_space),
-            .Down => |val| @min(self.view_start_idx +| (val * used_viewport_space), self.visible_files.items.len - used_viewport_space),
+            .Down => |val| @min(self.view_start_idx +| (val * used_viewport_space), self.visible_files.items.len -| used_viewport_space),
         };
         self.cursor = switch (move) {
             .Up => self.cursor -| (prev_start_idx - self.view_start_idx),
@@ -216,11 +216,7 @@ const DirView = struct {
 
         //handling of view_start_idx_being further down than it needs to be
         if (self.view_start_idx + used_viewport_space > self.visible_files.items.len) {
-            if (self.visible_files.items.len < used_viewport_space) {
-                self.view_start_idx = 0;
-            } else {
-                self.view_start_idx = self.visible_files.items.len - used_viewport_space;
-            }
+            self.view_start_idx = self.visible_files.items.len -| used_viewport_space;
         }
 
         //handling of cursor exiting the screen at the top or bottom
