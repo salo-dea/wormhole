@@ -19,6 +19,7 @@ const VIRTUAL_KEY_RIGHT = 454;
 const VIRTUAL_KEY_LEFT = 452;
 const VIRTUAL_KEY_BACKSPACE = 3;
 
+//TODO: understand if this is the proper way
 fn ctrl(comptime key: comptime_int) comptime_int {
     return ((key) & 0x1f);
 }
@@ -45,13 +46,14 @@ const DirExplorer = struct {
     allocator: std.mem.Allocator,
     contents: std.ArrayList(File),
     look_depth: usize = 0,
+    show_hidden: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
         var cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
         str_replace(cwd, '\\', '/');
         return DirExplorer{
             .current_dir = try std.fmt.allocPrint(allocator, "{s}/", .{cwd}),
-            .contents = try listdir(allocator, start_dir, 0),
+            .contents = try listdir(allocator, start_dir, .{ .recurse_depth = 0, .show_hidden = false }),
             .allocator = allocator,
         };
     }
@@ -65,9 +67,17 @@ const DirExplorer = struct {
         try self.refresh();
     }
 
+    pub fn set_show_hidden(self: *Self, new_val: bool) !void {
+        self.show_hidden = new_val;
+        try self.refresh();
+    }
+
     fn refresh(self: *Self) !void {
         self.contents.deinit();
-        self.contents = try listdir(self.allocator, self.current_dir, self.look_depth);
+        self.contents = try listdir(self.allocator, self.current_dir, .{
+            .recurse_depth = self.look_depth,
+            .show_hidden = self.show_hidden,
+        });
     }
 
     pub fn go_up(self: *Self) !void {
@@ -394,6 +404,7 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
             '>' => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
             '<' => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
             ctrl('r') => try dir_exp.set_look_depth(if (dir_exp.look_depth == 0) 5 else 0),
+            ctrl('v') => try dir_exp.set_show_hidden(!dir_exp.show_hidden),
             else => {
                 if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
                     dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
@@ -458,22 +469,36 @@ fn str_replace(str: []u8, from: u8, to: u8) void {
     }
 }
 
-fn listdir(alloc: std.mem.Allocator, dirname: []const u8, recurse_depth: usize) !std.ArrayList(File) {
+const ListdirOptions = struct {
+    recurse_depth: usize = 0,
+    show_hidden: bool = true,
+};
+
+fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOptions) !std.ArrayList(File) {
     const dir = try std.fs.cwd().openIterableDir(dirname, .{});
     var iterator = dir.iterate();
     var dirlist: std.ArrayList(File) = std.ArrayList(File).init(alloc);
 
     while (try iterator.next()) |path| {
+        if (!options.show_hidden and path.name[0] == '.') {
+            //skip hidden files/folders if desired
+            //TODO: understand how to get file attributes on windows
+            continue;
+        }
+
         try dirlist.append(File{
             .path = try std.fmt.allocPrint(alloc, "{s}", .{path.name}),
             .kind = path.kind,
         });
 
-        if (path.kind == .directory and recurse_depth > 0) {
+        if (path.kind == .directory and options.recurse_depth > 0) {
             const subfolder = try std.fmt.allocPrint(alloc, "{s}{s}/", .{ dirname, path.name });
             defer alloc.free(subfolder);
 
-            var subfolder_paths = try listdir(alloc, subfolder, recurse_depth - 1);
+            var subfolder_paths = try listdir(alloc, subfolder, .{
+                .recurse_depth = options.recurse_depth - 1,
+                .show_hidden = options.show_hidden,
+            });
             defer subfolder_paths.deinit();
 
             for (subfolder_paths.items) |*subitem| {
