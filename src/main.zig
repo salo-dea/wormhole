@@ -19,6 +19,10 @@ const VIRTUAL_KEY_RIGHT = 454;
 const VIRTUAL_KEY_LEFT = 452;
 const VIRTUAL_KEY_BACKSPACE = 3;
 
+fn ctrl(comptime key: comptime_int) comptime_int {
+    return ((key) & 0x1f);
+}
+
 const NcursesError = error{
     Generic,
 };
@@ -211,6 +215,8 @@ const DirView = struct {
     }
 
     pub fn print(self: *Self, alloc: std.mem.Allocator, num_lines_reserve: usize) !void {
+        //TODO: issue - at the end the "..." correctly disappears to show that there are no more
+        //              entries, but it doesn't get filled by an entry, pulling the search bar up
         const result = ncurses.getmaxy(ncurses.stdscr);
         if (result < 0) {
             return NcursesError.Generic;
@@ -220,7 +226,7 @@ const DirView = struct {
             return; //this means we cannot print anything...
         }
 
-        const used_viewport_space = term_lines -| num_lines_reserve;
+        const used_viewport_space = term_lines -| num_lines_reserve -| 1; //-1 to reserve space for "..."
 
         //handling of view_start_idx_being further down than it needs to be
         if (self.view_start_idx + used_viewport_space > self.visible_files.items.len) {
@@ -229,10 +235,11 @@ const DirView = struct {
 
         //handling of cursor exiting the screen at the top or bottom
         if (self.cursor >= self.view_start_idx + used_viewport_space) {
-            self.view_start_idx = self.cursor - used_viewport_space + 1;
+            self.view_start_idx = self.cursor -| used_viewport_space;
         } else if (self.cursor < self.view_start_idx) {
             self.view_start_idx = self.cursor;
         }
+
         const max_viewport_idx = self.view_start_idx + used_viewport_space;
         const max = @min(max_viewport_idx, self.visible_files.items.len);
         for (self.view_start_idx..max) |i| {
@@ -386,6 +393,7 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
             std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
             '>' => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
             '<' => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
+            ctrl('r') => try dir_exp.set_look_depth(if (dir_exp.look_depth == 0) 5 else 0),
             else => {
                 if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
                     dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
