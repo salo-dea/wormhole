@@ -61,7 +61,8 @@ const DirExplorer = struct {
     }
 
     pub fn go_up(self: *Self) !void {
-        var i = self.current_dir.len - 2;
+        var i = self.current_dir.len -| 2;
+        if (i == 0) return WormholeErrors.NoParent;
         while (true) : (i -= 1) {
             if (self.current_dir[i] == '/') {
                 self.current_dir.len = i + 1;
@@ -115,8 +116,15 @@ const DirView = struct {
     exp: *DirExplorer,
     filter: EditableString,
     visible_files: std.ArrayList(File),
-    cursor: i32 = 0,
+    cursor: usize = 0,
     view_start_idx: usize = 0,
+
+    const Direction = enum { Down, Up };
+
+    const DirectionMove = union(Direction) {
+        Down: usize,
+        Up: usize,
+    };
 
     fn init(allocator: std.mem.Allocator, dir_exp: *DirExplorer) !DirView {
         return DirView{
@@ -134,8 +142,8 @@ const DirView = struct {
         //we want to apply the last cursor position , if the element that was previously highlighted,
         //is still there, it should have the cursor again - otherwise the one before it
         var current_file_ptr: ?[*]u8 = null;
-        if (self.visible_files.items.len > self.get_cursor()) {
-            current_file_ptr = self.visible_files.items[self.get_cursor()].path.ptr;
+        if (self.visible_files.items.len > self.cursor) {
+            current_file_ptr = self.visible_files.items[self.cursor].path.ptr;
         }
 
         self.visible_files.resize(0) catch unreachable;
@@ -157,14 +165,41 @@ const DirView = struct {
         self.cursor = @intCast(new_cursor);
     }
 
-    pub fn move_cursor(self: *Self, move: i32) void {
-        const max_cursor: i32 = @intCast(self.visible_files.items.len);
+    pub fn move_cursor(self: *Self, move: DirectionMove) void {
+        const max_cursor = self.visible_files.items.len;
 
+        const moved = switch (move) {
+            .Up => |val| if (self.cursor == 0) max_cursor - 1 else self.cursor -| val,
+            .Down => |val| self.cursor +| val,
+        };
         if (max_cursor != 0) {
-            self.cursor = @mod(self.cursor + move, max_cursor);
+            self.cursor = @mod(moved, max_cursor);
         } else {
             self.cursor = 0;
         }
+    }
+
+    pub fn move_page(self: *Self, move: DirectionMove, num_lines_reserve: usize) !void {
+        const result = ncurses.getmaxy(ncurses.stdscr);
+        if (result < 0) {
+            return NcursesError.Generic;
+        }
+        const term_lines: usize = @intCast(result);
+        if (term_lines < num_lines_reserve) {
+            return; //this means we cannot print anything...
+        }
+
+        const used_viewport_space = term_lines - num_lines_reserve;
+        const prev_start_idx = self.view_start_idx;
+
+        self.view_start_idx = switch (move) {
+            .Up => |val| self.view_start_idx -| (val * used_viewport_space),
+            .Down => |val| @min(self.view_start_idx +| (val * used_viewport_space), self.visible_files.items.len - used_viewport_space),
+        };
+        self.cursor = switch (move) {
+            .Up => self.cursor -| (prev_start_idx - self.view_start_idx),
+            .Down => @min(self.cursor +| (self.view_start_idx - prev_start_idx), self.visible_files.items.len - 1),
+        };
     }
 
     pub fn print(self: *Self, alloc: std.mem.Allocator, num_lines_reserve: usize) !void {
@@ -177,7 +212,7 @@ const DirView = struct {
             return; //this means we cannot print anything...
         }
 
-        const used_viewport_space = term_lines - num_lines_reserve - 1;
+        const used_viewport_space = term_lines - num_lines_reserve - 1; // TODO why this -1
 
         //handling of view_start_idx_being further down than it needs to be
         if (self.view_start_idx + used_viewport_space > self.visible_files.items.len) {
@@ -189,17 +224,17 @@ const DirView = struct {
         }
 
         //handling of cursor exiting the screen at the top or bottom
-        if (self.get_cursor() >= self.view_start_idx + used_viewport_space) {
-            self.view_start_idx = self.get_cursor() - used_viewport_space + 1;
-        } else if (self.get_cursor() < self.view_start_idx) {
-            self.view_start_idx = self.get_cursor();
+        if (self.cursor >= self.view_start_idx + used_viewport_space) {
+            self.view_start_idx = self.cursor - used_viewport_space + 1;
+        } else if (self.cursor < self.view_start_idx) {
+            self.view_start_idx = self.cursor;
         }
         const max_viewport_idx = self.view_start_idx + used_viewport_space; // -1 to print a "..."
 
         const max = @min(max_viewport_idx, self.visible_files.items.len);
         for (self.view_start_idx..max) |i| {
             const dir = self.visible_files.items[i];
-            const highlighted: bool = i == self.get_cursor();
+            const highlighted: bool = i == self.cursor;
 
             if (highlighted) {
                 _ = ncurses.attron(ncurses.A_STANDOUT);
@@ -217,10 +252,6 @@ const DirView = struct {
         if (max_viewport_idx < self.visible_files.items.len) {
             try ncurse_print(alloc, "... \n", .{});
         }
-    }
-
-    pub fn get_cursor(self: Self) usize {
-        return @intCast(self.cursor);
     }
 
     // call after dir_exp changed to new dir
@@ -315,9 +346,10 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
         _ = ncurses.clear();
 
         _ = ncurses.move(0, 0); //reset cursor
+        const lines_used = 2; //lines printed directly by this function
         try ncurse_print(alloc, "-> {s} \n", .{dir_exp.current_dir});
 
-        try dir_view.print(alloc, 2);
+        try dir_view.print(alloc, lines_used);
 
         //const maxy = ncurses.getmaxy(win);
         //_ = ncurses.move(maxy - 1, 0);
@@ -327,10 +359,10 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
         var key: usize = getch() catch 255;
 
         switch (key) {
-            ncurses.KEY_DOWN, VIRTUAL_KEY_DOWN => dir_view.move_cursor(1),
-            ncurses.KEY_UP, VIRTUAL_KEY_UP => dir_view.move_cursor(-1),
+            ncurses.KEY_DOWN, VIRTUAL_KEY_DOWN => dir_view.move_cursor(.{ .Down = 1 }),
+            ncurses.KEY_UP, VIRTUAL_KEY_UP => dir_view.move_cursor(.{ .Up = 1 }),
             ncurses.KEY_RIGHT, VIRTUAL_KEY_RIGHT, '\n' => {
-                const target_file = dir_view.visible_files.items[dir_view.get_cursor()];
+                const target_file = dir_view.visible_files.items[dir_view.cursor];
                 const enter_res = try dir_exp.enter(target_file);
                 switch (enter_res) {
                     .NewDir => try dir_view.new_dir(),
@@ -341,8 +373,8 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
                 dir_exp.go_up() catch {};
                 try dir_view.new_dir();
             },
-            ncurses.KEY_PPAGE => {}, //page up
-            ncurses.KEY_NPAGE => {}, //page down
+            ncurses.KEY_PPAGE => try dir_view.move_page(.{ .Up = 1 }, lines_used), //page up
+            ncurses.KEY_NPAGE => try dir_view.move_page(.{ .Down = 1 }, lines_used), //page down
             ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
             std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
             else => {
