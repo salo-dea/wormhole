@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
             exe.linkLibrary(pdcurses.artifact("zig-pdcurses"));
         },
         .linux => {
-            exe.linkSystemLibrary("ncurses");
+            exe.linkSystemLibrary2("ncurses", .{ .preferred_link_mode = .Static });
         },
         else => @panic("Unsupported OS"),
     }
