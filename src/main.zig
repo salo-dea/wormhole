@@ -1,6 +1,6 @@
 //TODO:
-// - toggle hidden files
-// - page up/down
+// - figure out issue of open file descriptors, understand how listdir really works
+// - display the number of cut off paths at the bottom (like "...45")
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -42,6 +42,7 @@ const File = struct {
 
 const DirExplorer = struct {
     const Self = @This();
+    current_dir_alloc_size: usize,
     current_dir: []u8,
     allocator: std.mem.Allocator,
     contents: std.ArrayList(File),
@@ -49,17 +50,22 @@ const DirExplorer = struct {
     show_hidden: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
-        var cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
-        str_replace(cwd, '\\', '/');
+        var cwd = try std.fs.cwd().realpathAlloc(allocator, start_dir);
+        defer allocator.free(cwd);
+
+        str_replace(cwd, '\\', '/'); //force forward slashes, also on windows
+
+        const current_dir = try std.fmt.allocPrint(allocator, "{s}/", .{cwd});
         return DirExplorer{
-            .current_dir = try std.fmt.allocPrint(allocator, "{s}/", .{cwd}),
+            .current_dir_alloc_size = current_dir.len,
+            .current_dir = current_dir,
             .contents = try listdir(allocator, start_dir, .{ .recurse_depth = 0, .show_hidden = false }),
             .allocator = allocator,
         };
     }
     pub fn deinit(self: *Self) void {
         self.allocator.free(self.current_dir);
-        self.contents.deinit();
+        self.free_contents();
     }
 
     pub fn set_look_depth(self: *Self, new_depth: usize) !void {
@@ -72,8 +78,15 @@ const DirExplorer = struct {
         try self.refresh();
     }
 
-    fn refresh(self: *Self) !void {
+    fn free_contents(self: *Self) void {
+        for (self.contents.items) |value| {
+            self.allocator.free(value.path);
+        }
         self.contents.deinit();
+    }
+
+    fn refresh(self: *Self) !void {
+        self.free_contents();
         self.contents = try listdir(self.allocator, self.current_dir, .{
             .recurse_depth = self.look_depth,
             .show_hidden = self.show_hidden,
@@ -111,10 +124,12 @@ const DirExplorer = struct {
     pub fn enter(self: *Self, target_dir: File) !EnterResult {
         switch (target_dir.kind) {
             .directory => {
-                const last_dir = self.current_dir;
+                var last_dir = self.current_dir;
+                last_dir.len = self.current_dir_alloc_size; //to properly free... but this sucks
                 defer self.allocator.free(last_dir);
 
                 self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}{s}/", .{ self.current_dir, target_dir.path });
+                self.current_dir_alloc_size = self.current_dir.len;
                 self.look_depth = 0; //reset look depth, maybe rethink
                 try self.refresh();
                 return .NewDir;
@@ -148,7 +163,7 @@ const DirView = struct {
         Up: usize,
     };
 
-    fn init(allocator: std.mem.Allocator, dir_exp: *DirExplorer) !DirView {
+    pub fn init(allocator: std.mem.Allocator, dir_exp: *DirExplorer) !DirView {
         return DirView{
             .exp = dir_exp,
             .filter = try EditableString.init(allocator, 255),
@@ -156,11 +171,17 @@ const DirView = struct {
         };
     }
 
-    fn reset_filter(self: *DirView) void {
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        //TODO: paths that visible_files are referring to are actually owned by the dir_exp (janky)
+        self.filter.deinit(allocator);
+        self.visible_files.deinit();
+    }
+
+    pub fn reset_filter(self: *DirView) void {
         self.filter.reset();
     }
 
-    fn apply_filter(self: *DirView, thresh: usize) !void {
+    pub fn apply_filter(self: *DirView, thresh: usize) !void {
         //we want to apply the last cursor position , if the element that was previously highlighted,
         //is still there, it should have the cursor again - otherwise the one before it
         var current_file_ptr: ?[*]u8 = null;
@@ -184,7 +205,7 @@ const DirView = struct {
                 }
             }
         }
-        self.cursor = @intCast(new_cursor);
+        self.cursor = new_cursor;
     }
 
     pub fn move_cursor(self: *Self, move: DirectionMove) void {
@@ -298,7 +319,7 @@ const EditableString = struct {
     }
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        //TODO does the size matter for free?
+        self.cur.len = self.max_size; //the size DOES matter!
         allocator.free(self.cur);
     }
 
@@ -307,9 +328,7 @@ const EditableString = struct {
     }
 
     pub fn backspace(self: *Self) void {
-        if (self.cur.len != 0) {
-            self.cur.len -= 1;
-        }
+        self.cur.len -|= 1;
     }
 
     pub fn add_char(self: *Self, char: u8) !void {
@@ -322,9 +341,11 @@ const EditableString = struct {
 };
 
 pub fn main() !void {
-    //try mytest();
-    var alloc = std.heap.page_allocator; // std.heap.GeneralPurposeAllocator(.{}).allocator();
-    try print_dir_contents(alloc);
+    //var alloc = std.heap.page_allocator; // std.heap.GeneralPurposeAllocator(.{}).allocator();
+    var alloc = std.heap.GeneralPurposeAllocator(.{}){};
+
+    try print_dir_contents(alloc.allocator());
+    //_ = alloc.detectLeaks();
 }
 
 fn getch() NcursesError!usize {
@@ -360,7 +381,8 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
     var dir_exp = try DirExplorer.init(alloc, ".");
     defer dir_exp.deinit();
 
-    var dir_view = try DirView.init(alloc, &dir_exp); //TODO deinit
+    var dir_view = try DirView.init(alloc, &dir_exp);
+    defer dir_view.deinit(alloc); //must happen before DirExplorer deinit
 
     while (true) {
         _ = ncurses.clear();
@@ -399,7 +421,10 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
             },
             ncurses.KEY_PPAGE => try dir_view.move_page(.{ .Up = 1 }, lines_used), //page up
             ncurses.KEY_NPAGE => try dir_view.move_page(.{ .Down = 1 }, lines_used), //page down
-            ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => dir_view.filter.backspace(),
+            ncurses.KEY_BACKSPACE,
+            VIRTUAL_KEY_BACKSPACE,
+            std.ascii.control_code.bs,
+            => dir_view.filter.backspace(),
             std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
             '>' => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
             '<' => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
@@ -431,6 +456,7 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
     _ = ncurses.cbreak();
 
     const target_file = try navigate(alloc);
+    defer alloc.free(target_file);
 
     _ = ncurses.endwin();
 
@@ -475,7 +501,9 @@ const ListdirOptions = struct {
 };
 
 fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOptions) !std.ArrayList(File) {
-    const dir = try std.fs.cwd().openIterableDir(dirname, .{});
+    var dir = try std.fs.cwd().openIterableDir(dirname, .{});
+    defer dir.close();
+
     var iterator = dir.iterate();
     var dirlist: std.ArrayList(File) = std.ArrayList(File).init(alloc);
 
@@ -487,7 +515,7 @@ fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOption
         }
 
         try dirlist.append(File{
-            .path = try std.fmt.allocPrint(alloc, "{s}", .{path.name}),
+            .path = try alloc.dupe(u8, path.name),
             .kind = path.kind,
         });
 
