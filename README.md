@@ -1,8 +1,9 @@
 # wormhole
+[![.github/workflows/main.yml](https://github.com/salo-dea/wormhole/actions/workflows/main.yml/badge.svg)](https://github.com/salo-dea/wormhole/actions/workflows/main.yml)
 
 Fast directory navigation using ncurses
 
-## Build
+## Build 
 - requires:
   - zig 0.12.0 (master: https://ziglang.org/download/)
   - ncurses (only needed on linux)
