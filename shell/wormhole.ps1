@@ -20,6 +20,7 @@ while($true) {
     }
     elseif ($is_file){
         Invoke-Item $target_path # open with default app
+        Set-Location (get-item $target_path).Directory # change to target directory to reopen wormhole there afterwards
     }
     else {
         Write-Error "Invalid Path"
