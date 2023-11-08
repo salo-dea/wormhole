@@ -390,16 +390,12 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
 
         _ = ncurses.move(0, 0); //reset cursor
         const lines_used = 2; //lines printed directly by this function
-        try ncurse_print(alloc, "-> {s} \n", .{dir_exp.current_dir});
+        try ncurse_print(alloc, "[r={d}, h={any}] -> {s} \n", .{ dir_exp.look_depth, dir_exp.show_hidden, dir_exp.current_dir });
 
         try dir_view.print(alloc, lines_used);
 
         //const maxy = ncurses.getmaxy(win);
         //_ = ncurses.move(maxy - 1, 0);
-        for (0..dir_exp.look_depth) |i| {
-            _ = i;
-            try ncurse_print(alloc, ">", .{}); //TODO: this hurts
-        }
         try ncurse_print(alloc, "> {s}", .{dir_view.filter.cur});
 
         _ = ncurses.refresh();
@@ -427,10 +423,11 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
             std.ascii.control_code.bs,
             => dir_view.filter.backspace(),
             std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
-            '>' => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
-            '<' => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
+            ctrl('s') => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
+            ctrl('a') => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
             ctrl('r') => try dir_exp.set_look_depth(if (dir_exp.look_depth == 0) 5 else 0),
-            ctrl('v') => try dir_exp.set_show_hidden(!dir_exp.show_hidden),
+            ctrl('y') => try dir_exp.set_show_hidden(!dir_exp.show_hidden),
+            ctrl('x') => return try alloc.dupe(u8, "."), //exit without dirchange
             else => {
                 if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
                     dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
@@ -454,7 +451,6 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
 
     _ = ncurses.keypad(ncurses.stdscr, true);
     _ = ncurses.noecho();
-    _ = ncurses.cbreak();
 
     const target_file = try navigate(alloc);
     defer alloc.free(target_file);
