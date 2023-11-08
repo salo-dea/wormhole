@@ -292,7 +292,8 @@ const DirView = struct {
             }
         }
         if (max_viewport_idx < self.visible_files.items.len) {
-            try ncurse_print(alloc, "... \n", .{});
+            const remaining_files = self.visible_files.items.len - max_viewport_idx;
+            try ncurse_print(alloc, "[..{d}]\n", .{remaining_files});
         }
     }
 
