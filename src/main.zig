@@ -64,6 +64,7 @@ const DirExplorer = struct {
         };
     }
     pub fn deinit(self: *Self) void {
+        self.current_dir.len = self.current_dir_alloc_size;
         self.allocator.free(self.current_dir);
         self.free_contents();
     }
@@ -345,7 +346,7 @@ pub fn main() !void {
     var alloc = std.heap.GeneralPurposeAllocator(.{}){};
 
     try print_dir_contents(alloc.allocator());
-    //_ = alloc.detectLeaks();
+    _ = alloc.detectLeaks();
 }
 
 fn getch() NcursesError!usize {
