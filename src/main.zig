@@ -267,7 +267,7 @@ const DirView = struct {
 
         //handling of cursor exiting the screen at the top or bottom
         if (self.cursor >= self.view_start_idx + used_viewport_space) {
-            self.view_start_idx = self.cursor -| used_viewport_space;
+            self.view_start_idx = self.cursor -| used_viewport_space + 1;
         } else if (self.cursor < self.view_start_idx) {
             self.view_start_idx = self.cursor;
         }
