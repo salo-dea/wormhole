@@ -213,16 +213,16 @@ const DirView = struct {
 
     pub fn move_cursor(self: *Self, move: DirectionMove) void {
         const max_cursor = self.visible_files.items.len;
+        if (max_cursor == 0) {
+            self.cursor = 0;
+            return;
+        }
 
         const moved = switch (move) {
             .Up => |val| if (self.cursor == 0) max_cursor - 1 else self.cursor -| val,
             .Down => |val| self.cursor +| val,
         };
-        if (max_cursor != 0) {
-            self.cursor = @mod(moved, max_cursor);
-        } else {
-            self.cursor = 0;
-        }
+        self.cursor = @mod(moved, max_cursor);
     }
 
     pub fn move_page(self: *Self, move: DirectionMove, num_lines_reserve: usize) !void {
