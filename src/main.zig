@@ -381,6 +381,43 @@ fn str_match(str: []const u8, pattern: []const u8) usize {
     return if (pattern.len == minlen) std.math.maxInt(usize) else minlen; //complete match
 }
 
+const UserAction = enum {
+    FilterBackspace,
+    CursorDown,
+    CursorUp,
+    GoUp,
+    HiddenToggle,
+    Open,
+    PageDown,
+    PageUp,
+    RecurseDecrease,
+    RecurseIncrease,
+    RecurseToggle,
+    ExitCd,
+    ExitNoCd,
+    FilterAddChar,
+    Unknown,
+};
+
+fn map_key(key: usize) UserAction {
+    return switch (key) {
+        ncurses.KEY_DOWN, VIRTUAL_KEY_DOWN => .CursorDown,
+        ncurses.KEY_UP, VIRTUAL_KEY_UP => .CursorUp,
+        ncurses.KEY_RIGHT, VIRTUAL_KEY_RIGHT, '\n' => .Open,
+        ncurses.KEY_LEFT, VIRTUAL_KEY_LEFT => .GoUp,
+        ncurses.KEY_PPAGE => .PageUp,
+        ncurses.KEY_NPAGE => .PageDown,
+        ncurses.KEY_BACKSPACE, VIRTUAL_KEY_BACKSPACE, std.ascii.control_code.bs => .FilterBackspace,
+        std.ascii.control_code.esc => .ExitCd,
+        ctrl('s') => .RecurseIncrease,
+        ctrl('a') => .RecurseDecrease,
+        ctrl('r') => .RecurseToggle,
+        ctrl('y') => .HiddenToggle,
+        ctrl('x') => .ExitNoCd,
+        else => if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) .FilterAddChar else .Unknown,
+    };
+}
+
 fn navigate(alloc: std.mem.Allocator) ![]u8 {
     var dir_exp = try DirExplorer.init(alloc, ".");
     defer dir_exp.deinit();
@@ -404,10 +441,9 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
         _ = ncurses.refresh();
         var key: usize = getch() catch 255;
 
-        switch (key) {
-            ncurses.KEY_DOWN, VIRTUAL_KEY_DOWN => dir_view.move_cursor(.{ .Down = 1 }),
-            ncurses.KEY_UP, VIRTUAL_KEY_UP => dir_view.move_cursor(.{ .Up = 1 }),
-            ncurses.KEY_RIGHT, VIRTUAL_KEY_RIGHT, '\n' => {
+        const action = map_key(key);
+        switch (action) {
+            .Open => {
                 const target_file = dir_view.visible_files.items[dir_view.cursor];
                 const enter_res = try dir_exp.enter(target_file);
                 switch (enter_res) {
@@ -415,29 +451,23 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
                     .IsFile => |file| return file,
                 }
             },
-            ncurses.KEY_LEFT, VIRTUAL_KEY_LEFT => {
+            .GoUp => {
                 dir_exp.go_up() catch {};
                 try dir_view.new_dir();
             },
-            ncurses.KEY_PPAGE => try dir_view.move_page(.{ .Up = 1 }, lines_used), //page up
-            ncurses.KEY_NPAGE => try dir_view.move_page(.{ .Down = 1 }, lines_used), //page down
-            ncurses.KEY_BACKSPACE,
-            VIRTUAL_KEY_BACKSPACE,
-            std.ascii.control_code.bs,
-            => dir_view.filter.backspace(),
-            std.ascii.control_code.esc => return try alloc.dupe(u8, dir_exp.current_dir),
-            ctrl('s') => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
-            ctrl('a') => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
-            ctrl('r') => try dir_exp.set_look_depth(if (dir_exp.look_depth == 0) 5 else 0),
-            ctrl('y') => try dir_exp.set_show_hidden(!dir_exp.show_hidden),
-            ctrl('x') => return try alloc.dupe(u8, "."), //exit without dirchange
-            else => {
-                if (key <= std.math.maxInt(u8) and !std.ascii.isControl(@intCast(key))) {
-                    dir_view.filter.add_char(@intCast(key)) catch {}; //TODO handle error?
-                } else {
-                    std.debug.print("UNKNOWN KEY: {d} \n", .{key});
-                }
-            },
+            .CursorDown => dir_view.move_cursor(.{ .Down = 1 }),
+            .CursorUp => dir_view.move_cursor(.{ .Up = 1 }),
+            .ExitCd => return try alloc.dupe(u8, dir_exp.current_dir),
+            .ExitNoCd => return try alloc.dupe(u8, "."), //exit without dirchange
+            .FilterAddChar => dir_view.filter.add_char(@intCast(key)) catch {},
+            .FilterBackspace => dir_view.filter.backspace(),
+            .HiddenToggle => try dir_exp.set_show_hidden(!dir_exp.show_hidden),
+            .PageDown => try dir_view.move_page(.{ .Down = 1 }, lines_used), //page down
+            .PageUp => try dir_view.move_page(.{ .Up = 1 }, lines_used), //page up
+            .RecurseDecrease => try dir_exp.set_look_depth(dir_exp.look_depth -| 1),
+            .RecurseIncrease => try dir_exp.set_look_depth(dir_exp.look_depth +| 1),
+            .RecurseToggle => try dir_exp.set_look_depth(if (dir_exp.look_depth == 0) 5 else 0),
+            .Unknown => std.debug.print("UNKNOWN KEY: {d} \n", .{key}),
         }
 
         try dir_view.apply_filter(500);
