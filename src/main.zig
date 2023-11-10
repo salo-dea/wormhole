@@ -185,6 +185,8 @@ const DirView = struct {
     pub fn apply_filter(self: *DirView, thresh: usize) !void {
         //we want to apply the last cursor position , if the element that was previously highlighted,
         //is still there, it should have the cursor again - otherwise the one before it
+        //TODO this needs to be reworked.. if the underlying dir_exp is refreshed then this pointer has been freed already
+        // and a new string allocated --> need some persistent state where we don't completely re-read all the dirs -> tree structure!
         var current_file_ptr: ?[*]u8 = null;
         if (self.visible_files.items.len > self.cursor) {
             current_file_ptr = self.visible_files.items[self.cursor].path.ptr;
@@ -464,12 +466,19 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
     _ = try file.write(target_file);
 }
 
-fn str_less_than(context: void, str_a: []const u8, str_b: []const u8) bool {
+fn str_less_than(context: void, str_a: []const u8, str_b: []const u8, comptime case_sensitive: bool) bool {
     _ = context;
     var minlen: usize = @min(str_a.len, str_b.len);
     for (str_a[0..minlen], str_b[0..minlen]) |a, b| {
-        if (a != b) {
-            return a < b;
+        var a_ = a;
+        var b_ = b;
+        if (case_sensitive) {
+            a_ = std.ascii.toLower(a);
+            b_ = std.ascii.toLower(b);
+        }
+
+        if (a_ != b_) {
+            return a_ < b_;
         }
     }
     return str_a.len < str_b.len;
@@ -482,7 +491,7 @@ fn file_less_than(context: void, file_a: File, file_b: File) bool {
         return file_a.kind == std.fs.File.Kind.directory;
     }
     // everything else sorted by name
-    return str_less_than(context, file_a.path, file_b.path);
+    return str_less_than(context, file_a.path, file_b.path, true);
 }
 
 fn str_replace(str: []u8, from: u8, to: u8) void {
