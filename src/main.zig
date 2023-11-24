@@ -50,7 +50,7 @@ const DirExplorer = struct {
     show_hidden: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
-        var cwd = try std.fs.cwd().realpathAlloc(allocator, start_dir);
+        const cwd = try std.fs.cwd().realpathAlloc(allocator, start_dir);
         defer allocator.free(cwd);
 
         str_replace(cwd, '\\', '/'); //force forward slashes, also on windows
@@ -353,7 +353,7 @@ pub fn main() !void {
 }
 
 fn getch() NcursesError!usize {
-    var val = ncurses.getch();
+    const val = ncurses.getch();
     if (val < 0) {
         return NcursesError.Generic;
     } else {
@@ -362,13 +362,13 @@ fn getch() NcursesError!usize {
 }
 
 fn ncurse_print(alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
-    var buf = try std.fmt.allocPrintZ(alloc, fmt, args);
+    const buf = try std.fmt.allocPrintZ(alloc, fmt, args);
     defer alloc.free(buf);
     _ = ncurses.printw(buf.ptr);
 }
 
 fn str_match(str: []const u8, pattern: []const u8) usize {
-    var minlen: usize = @min(str.len, pattern.len);
+    const minlen: usize = @min(str.len, pattern.len);
     for (str[0..minlen], pattern[0..minlen], 0..) |a, b, idx| {
         if (std.ascii.toLower(a) != std.ascii.toLower(b)) {
             var new_str = str;
@@ -439,7 +439,7 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
         try ncurse_print(alloc, "> {s}", .{dir_view.filter.cur});
 
         _ = ncurses.refresh();
-        var key: usize = getch() catch 255;
+        const key: usize = getch() catch 255;
 
         const action = map_key(key);
         switch (action) {
@@ -476,7 +476,7 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
 
 fn print_dir_contents(alloc: std.mem.Allocator) !void {
     //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
-    var screen = switch (builtin.os.tag) {
+    const screen = switch (builtin.os.tag) {
         .windows => ncurses.newterm(null, STDERR, STDIN),
         else => ncurses.newterm(null, ncurses.stdout, ncurses.stdin),
     };
@@ -498,7 +498,7 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
 
 fn str_less_than(context: void, str_a: []const u8, str_b: []const u8, comptime case_sensitive: bool) bool {
     _ = context;
-    var minlen: usize = @min(str_a.len, str_b.len);
+    const minlen: usize = @min(str_a.len, str_b.len);
     for (str_a[0..minlen], str_b[0..minlen]) |a, b| {
         var a_ = a;
         var b_ = b;
@@ -538,7 +538,7 @@ const ListdirOptions = struct {
 };
 
 fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOptions) !std.ArrayList(File) {
-    var dir = try std.fs.cwd().openIterableDir(dirname, .{});
+    var dir = try std.fs.cwd().openDir(dirname, .{ .iterate = true });
     defer dir.close();
 
     var iterator = dir.iterate();
@@ -567,7 +567,7 @@ fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOption
             defer subfolder_paths.deinit();
 
             for (subfolder_paths.items) |*subitem| {
-                var subitem_path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ path.name, subitem.path });
+                const subitem_path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ path.name, subitem.path });
                 alloc.free(subitem.path);
                 subitem.path = subitem_path;
             }
