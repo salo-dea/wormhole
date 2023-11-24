@@ -11,8 +11,8 @@ jobs:
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.12.0-dev.1717+54f4abae2 # default is master
-      - run: zig build
-      - run: zig build -Dtarget=x86_64-windows-gnu
+      - run: zig build -Doptimize=ReleaseSafe
+      - run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
       - uses: actions/upload-artifact@v3.1.3
         with:
           # Artifact name
