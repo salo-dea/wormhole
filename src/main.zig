@@ -370,10 +370,24 @@ fn ncurse_print(alloc: std.mem.Allocator, comptime fmt: []const u8, args: anytyp
 fn str_match(str: []const u8, pattern: []const u8) usize {
     const minlen: usize = @min(str.len, pattern.len);
     for (str[0..minlen], pattern[0..minlen], 0..) |a, b, idx| {
+        if (b == '*') {
+            var new_pat = pattern;
+            new_pat.ptr += idx + 1;
+            new_pat.len -= idx + 1;
+
+            var new_str = str;
+            new_str.ptr += idx;
+            new_str.len -= idx;
+
+            const sub_match = str_match(new_str, new_pat);
+            return @max(idx, sub_match);
+        }
+
         if (std.ascii.toLower(a) != std.ascii.toLower(b)) {
             var new_str = str;
-            new_str.ptr = str.ptr + 1;
-            new_str.len = str.len - 1;
+            new_str.ptr += 1;
+            new_str.len -= 1;
+
             const sub_match = str_match(new_str, pattern);
             return @max(idx, sub_match);
         }
