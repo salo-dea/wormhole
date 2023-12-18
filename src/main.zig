@@ -458,11 +458,13 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
         const action = map_key(key);
         switch (action) {
             .Open => {
-                const target_file = dir_view.visible_files.items[dir_view.cursor];
-                const enter_res = try dir_exp.enter(target_file);
-                switch (enter_res) {
-                    .NewDir => try dir_view.new_dir(),
-                    .IsFile => |file| return file,
+                if (dir_view.visible_files.items.len != 0) {
+                    const target_file = dir_view.visible_files.items[dir_view.cursor];
+                    const enter_res = try dir_exp.enter(target_file);
+                    switch (enter_res) {
+                        .NewDir => try dir_view.new_dir(),
+                        .IsFile => |file| return file,
+                    }
                 }
             },
             .GoUp => {
@@ -552,7 +554,10 @@ const ListdirOptions = struct {
 };
 
 fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOptions) !std.ArrayList(File) {
-    var dir = try std.fs.cwd().openDir(dirname, .{ .iterate = true });
+    var dir = std.fs.cwd().openDir(dirname, .{ .iterate = true }) catch |err| switch (err) {
+        std.fs.Dir.OpenError.AccessDenied => return std.ArrayList(File).init(alloc), //empty list
+        else => return err,
+    };
     defer dir.close();
 
     var iterator = dir.iterate();
