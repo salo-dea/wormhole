@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    switch (target.getOsTag()) {
+    switch (target.result.os.tag) {
         .windows => {
             const pdcurses = b.dependency("zig_pdcurses", .{
                 .target = target,
