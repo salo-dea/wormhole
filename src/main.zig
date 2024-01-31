@@ -1,12 +1,18 @@
-//TODO:
-// - figure out issue of open file descriptors, understand how listdir really works
-// - display the number of cut off paths at the bottom (like "...45")
-
 const std = @import("std");
 const builtin = @import("builtin");
 const ncurses = @cImport({
     @cInclude("curses.h");
 });
+
+const winapi = switch (builtin.os.tag) {
+    .windows => @cImport({
+        @cInclude("fileapi.h");
+    }),
+    else => undefined,
+};
+const WinApiError = error{
+    Generic,
+};
 
 const STDIN = 0;
 const STDOUT = 1;
@@ -96,20 +102,14 @@ const DirExplorer = struct {
 
     pub fn go_up(self: *Self) !void {
         var i = self.current_dir.len -| 2;
-        if (i == 0) return WormholeErrors.NoParent;
-        while (true) : (i -= 1) {
+        self.current_dir.len = while (i > 0) : (i -= 1) {
             if (self.current_dir[i] == '/') {
-                self.current_dir.len = i + 1;
-                self.look_depth = 0; //reset look depth, maybe rethink
-                try self.refresh();
-                return;
+                break i + 1;
             }
-            if (i == 0) {
-                break;
-            }
-        }
-
-        return WormholeErrors.NoParent;
+        } else 0;
+        self.look_depth = 0; //reset look depth, maybe rethink
+        try self.refresh();
+        return;
     }
 
     const EnterResultKind = enum {
@@ -554,14 +554,21 @@ const ListdirOptions = struct {
 };
 
 fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOptions) !std.ArrayList(File) {
+
+    //handle case of drive letters
+    if (builtin.os.tag == .windows and dirname.len == 0) {
+        return list_drive_letters(alloc);
+    }
+
     var dir = std.fs.cwd().openDir(dirname, .{ .iterate = true }) catch |err| switch (err) {
-        std.fs.Dir.OpenError.AccessDenied => return std.ArrayList(File).init(alloc), //empty list
+        std.fs.Dir.OpenError.AccessDenied, std.os.UnexpectedError.Unexpected => return std.ArrayList(File).init(alloc), //empty list
         else => return err,
     };
     defer dir.close();
 
     var iterator = dir.iterate();
     var dirlist: std.ArrayList(File) = std.ArrayList(File).init(alloc);
+    errdefer dirlist.deinit();
 
     while (try iterator.next()) |path| {
         if (!options.show_hidden and path.name[0] == '.') {
@@ -594,5 +601,28 @@ fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOption
         }
     }
     std.sort.block(File, dirlist.items, {}, file_less_than);
+    return dirlist;
+}
+
+fn list_drive_letters(alloc: std.mem.Allocator) !std.ArrayList(File) {
+    var dirlist: std.ArrayList(File) = std.ArrayList(File).init(alloc);
+    errdefer dirlist.deinit();
+
+    const drv_bitmask = winapi.GetLogicalDrives();
+    if (drv_bitmask == 0) {
+        return WinApiError.Generic;
+    }
+    const one: @TypeOf(drv_bitmask) = 1;
+    var i: u5 = 0;
+    //forgive me for hardcoding the number of letters in the alphabet
+    while (i < 26) : (i += 1) {
+        if ((drv_bitmask & (one << i)) != 0) {
+            const letter: u8 = 'A' + @as(u8, i);
+            try dirlist.append(File{
+                .path = try std.fmt.allocPrint(alloc, "{c}:", .{letter}),
+                .kind = .directory,
+            });
+        }
+    }
     return dirlist;
 }
