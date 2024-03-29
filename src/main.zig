@@ -100,20 +100,25 @@ const DirExplorer = struct {
             .show_hidden = self.show_hidden,
         }) catch |err| {
             self.contents = std.ArrayList(File).init(self.allocator);
-            self.last_err = err;
-            return;
+            return err;
         };
     }
 
     pub fn go_up(self: *Self) !void {
+        const last_dir_len = self.current_dir.len;
         var i = self.current_dir.len -| 2;
-        self.current_dir.len = while (i > 0) : (i -= 1) {
+        self.current_dir.len = while (i >= 0) : (i -= 1) {
             if (self.current_dir[i] == '/') {
                 break i + 1;
             }
         } else 0;
         self.look_depth = 0; //reset look depth, maybe rethink
-        try self.refresh();
+        self.refresh() catch |err| {
+            // reset length, otherwise we may get stuck at '/' if we don't have access there
+            self.current_dir.len = last_dir_len;
+            self.last_err = err;
+            try self.refresh(); // should always succeed
+        };
         return;
     }
 
@@ -130,14 +135,20 @@ const DirExplorer = struct {
     pub fn enter(self: *Self, target_dir: File) !EnterResult {
         switch (target_dir.kind) {
             .directory => {
-                var last_dir = self.current_dir;
-                last_dir.len = self.current_dir_alloc_size; //to properly free... but this sucks
-                defer self.allocator.free(last_dir);
+                var last_dir = self.current_dir; // must be freed at the end ONLY if successful!
 
                 self.current_dir = try std.fmt.allocPrint(self.allocator, "{s}{s}/", .{ self.current_dir, target_dir.path });
+                self.refresh() catch |err| {
+                    self.last_err = err;
+                    self.allocator.free(self.current_dir);
+                    self.current_dir = last_dir;
+                    try self.refresh(); // should never fail, we're in the previous directory
+                    return .NewDir;
+                };
+                last_dir.len = self.current_dir_alloc_size; //to properly free... but this sucks
                 self.current_dir_alloc_size = self.current_dir.len;
                 self.look_depth = 0; //reset look depth, maybe rethink
-                try self.refresh();
+                self.allocator.free(last_dir);
                 return .NewDir;
             },
             .file => {
@@ -265,7 +276,7 @@ const DirView = struct {
             return; //this means we cannot print anything...
         }
 
-        var used_viewport_space = term_lines -| num_lines_reserve -| 1; //-1 to reserve space for "..."
+        const used_viewport_space = term_lines -| num_lines_reserve -| 1; //-1 to reserve space for "..."
 
         //handling of view_start_idx_being further down than it needs to be
         if (self.view_start_idx + used_viewport_space > self.visible_files.items.len) {
@@ -277,13 +288,6 @@ const DirView = struct {
             self.view_start_idx = self.cursor -| used_viewport_space + 1;
         } else if (self.cursor < self.view_start_idx) {
             self.view_start_idx = self.cursor;
-        }
-
-        // print error information, if available
-        if (self.exp.last_err) |err| {
-            try ncurse_print(alloc, "[ERR] {s}\n", .{@errorName(err)});
-            self.exp.last_err = null;
-            used_viewport_space -|= 1;
         }
 
         const max_viewport_idx = self.view_start_idx + used_viewport_space;
@@ -456,6 +460,12 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
 
         _ = ncurses.move(0, 0); //reset cursor
         const lines_used = 2; //lines printed directly by this function
+
+        // print error information, if available
+        if (dir_exp.last_err) |err| {
+            try ncurse_print(alloc, "[ERR: {s} ] ", .{@errorName(err)});
+            dir_exp.last_err = null;
+        }
         try ncurse_print(alloc, "[r={d}, h={any}] -> {s} \n", .{ dir_exp.look_depth, dir_exp.show_hidden, dir_exp.current_dir });
 
         try dir_view.print(alloc, lines_used);
