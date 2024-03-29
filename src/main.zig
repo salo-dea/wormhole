@@ -54,11 +54,11 @@ const DirExplorer = struct {
     contents: std.ArrayList(File),
     look_depth: usize = 0,
     show_hidden: bool = false,
+    last_err: ?anyerror = null,
 
     pub fn init(allocator: std.mem.Allocator, start_dir: []const u8) !DirExplorer {
         const cwd = try std.fs.cwd().realpathAlloc(allocator, start_dir);
         defer allocator.free(cwd);
-
         str_replace(cwd, '\\', '/'); //force forward slashes, also on windows
 
         const current_dir = try std.fmt.allocPrint(allocator, "{s}/", .{cwd});
@@ -90,14 +90,19 @@ const DirExplorer = struct {
             self.allocator.free(value.path);
         }
         self.contents.deinit();
+        self.contents.items.len = 0;
     }
 
     fn refresh(self: *Self) !void {
         self.free_contents();
-        self.contents = try listdir(self.allocator, self.current_dir, .{
+        self.contents = listdir(self.allocator, self.current_dir, .{
             .recurse_depth = self.look_depth,
             .show_hidden = self.show_hidden,
-        });
+        }) catch |err| {
+            self.contents = std.ArrayList(File).init(self.allocator);
+            self.last_err = err;
+            return;
+        };
     }
 
     pub fn go_up(self: *Self) !void {
@@ -260,7 +265,7 @@ const DirView = struct {
             return; //this means we cannot print anything...
         }
 
-        const used_viewport_space = term_lines -| num_lines_reserve -| 1; //-1 to reserve space for "..."
+        var used_viewport_space = term_lines -| num_lines_reserve -| 1; //-1 to reserve space for "..."
 
         //handling of view_start_idx_being further down than it needs to be
         if (self.view_start_idx + used_viewport_space > self.visible_files.items.len) {
@@ -272,6 +277,13 @@ const DirView = struct {
             self.view_start_idx = self.cursor -| used_viewport_space + 1;
         } else if (self.cursor < self.view_start_idx) {
             self.view_start_idx = self.cursor;
+        }
+
+        // print error information, if available
+        if (self.exp.last_err) |err| {
+            try ncurse_print(alloc, "[ERR] {s}\n", .{@errorName(err)});
+            self.exp.last_err = null;
+            used_viewport_space -|= 1;
         }
 
         const max_viewport_idx = self.view_start_idx + used_viewport_space;
@@ -468,7 +480,7 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
                 }
             },
             .GoUp => {
-                dir_exp.go_up() catch {};
+                try dir_exp.go_up();
                 try dir_view.new_dir();
             },
             .CursorDown => dir_view.move_cursor(.{ .Down = 1 }),
@@ -560,10 +572,11 @@ fn listdir(alloc: std.mem.Allocator, dirname: []const u8, options: ListdirOption
         return list_drive_letters(alloc);
     }
 
-    var dir = std.fs.cwd().openDir(dirname, .{ .iterate = true }) catch |err| switch (err) {
-        std.fs.Dir.OpenError.AccessDenied, std.os.UnexpectedError.Unexpected => return std.ArrayList(File).init(alloc), //empty list
-        else => return err,
-    };
+    // var dir = std.fs.cwd().openDir(dirname, .{ .iterate = true }) catch |err| switch (err) {
+    //     std.fs.Dir.OpenError.AccessDenied => return std.ArrayList(File).init(alloc), //empty list
+    //     else => return err,
+    // };
+    var dir = try std.fs.cwd().openDir(dirname, .{ .iterate = true });
     defer dir.close();
 
     var iterator = dir.iterate();
