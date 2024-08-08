@@ -4,8 +4,8 @@
     .paths = .{""},
     .dependencies = .{
         .zig_pdcurses = .{
-            .url = "https://github.com/salo-dea/zig-pdcurses/archive/refs/tags/v0.0.4.tar.gz",
-            .hash = "1220937f38e796f4069a055597b8f52ad72bfa457416a6590caa0104cf70deb3f485",
+            .url = "https://github.com/salo-dea/zig-pdcurses/archive/refs/tags/v0.0.5.tar.gz",
+            .hash = "1220a649101daa14ea8d0a0c156f1ac0e4e63a4e82b9b9363a501e77ef78f75f33ac",
         },
     },
 }
