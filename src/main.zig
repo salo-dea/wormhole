@@ -39,6 +39,7 @@ const WormholeErrors = error{
     NoDir,
     UnsupportedPath,
     FullBuffer,
+    NoTty,
 };
 
 const File = struct {
@@ -513,10 +514,15 @@ fn navigate(alloc: std.mem.Allocator) ![]u8 {
 }
 
 fn print_dir_contents(alloc: std.mem.Allocator) !void {
-    //init ncurses with newterm like this -> ncurses outputs to stderr, and we can print to stdout for directory change
+    //print our interface to tty
+    const tty = ncurses.fopen("/dev/tty", "w");
+    if (tty == null) {
+        return WormholeErrors.NoTty;
+    }
+
     const screen = switch (builtin.os.tag) {
-        .windows => ncurses.newterm(null, STDERR, STDIN),
-        else => ncurses.newterm(null, ncurses.stdout, ncurses.stdin),
+        .windows => ncurses.newterm(null, tty, STDIN),
+        else => ncurses.newterm(null, tty, ncurses.stdin),
     };
     _ = screen;
 
@@ -532,6 +538,7 @@ fn print_dir_contents(alloc: std.mem.Allocator) !void {
     var file = try std.fs.cwd().createFile(".fastnav-wormhole", .{});
     defer file.close();
     _ = try file.write(target_file);
+    _ = try std.io.getStdOut().write(target_file);
 }
 
 fn str_less_than(context: void, str_a: []const u8, str_b: []const u8, comptime case_sensitive: bool) bool {
