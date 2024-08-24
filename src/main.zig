@@ -107,9 +107,9 @@ const DirExplorer = struct {
     pub fn go_up(self: *Self) !void {
         const last_dir_len = self.current_dir.len;
         var i = self.current_dir.len -| 2;
-        self.current_dir.len = while (i >= 0) : (i -= 1) {
-            if (self.current_dir[i] == '/') {
-                break i + 1;
+        self.current_dir.len = while (i > 0) : (i -= 1) {
+            if (self.current_dir[i - 1] == '/') {
+                break i;
             }
         } else 0;
         self.look_depth = 0; //reset look depth, maybe rethink
