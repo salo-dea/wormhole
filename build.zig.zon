@@ -1,5 +1,6 @@
 .{
-    .name = "wormhole",
+    .name = .wormhole,
+    .fingerprint = 0xd088865798e5f3c8,
     .version = "0.0.1",
     .paths = .{""},
     .dependencies = .{
